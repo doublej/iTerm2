@@ -2682,3 +2682,14 @@ Bug Fixes:
   single tabs into, around, or out of a group.
   Groups persist their name and color with the
   member tabs.
+- Tab groups can form themselves: turn on
+  “Automatically put tabs in a tab group per
+  project?” under Tabs in Advanced Preferences
+  and tabs working in the same project — the
+  nearest enclosing git repository, or the
+  working directory itself — are grouped under
+  that folder’s name, in a color the project
+  keeps across launches. Once you create,
+  rename, recolor, or drag a tab into or out of
+  a group, that tab is yours and is never
+  regrouped automatically.

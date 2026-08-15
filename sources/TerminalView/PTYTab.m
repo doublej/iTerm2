@@ -100,6 +100,8 @@ static NSString* TAB_ARRANGEMENT_PINNED = @"Pinned";
 static NSString* TAB_ARRANGEMENT_GROUP_ID = @"Tab Group ID";
 static NSString* TAB_ARRANGEMENT_GROUP_NAME = @"Tab Group Name";
 static NSString* TAB_ARRANGEMENT_GROUP_COLOR = @"Tab Group Color";
+static NSString* TAB_ARRANGEMENT_GROUP_PROJECT_ROOT = @"Tab Group Project Root";
+static NSString* TAB_ARRANGEMENT_GROUP_PINNED_BY_USER = @"Tab Group Pinned By User";
 
 static const BOOL USE_THIN_SPLITTERS = YES;
 
@@ -3582,6 +3584,8 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     if (groupColorDict) {
         theTab.tabGroupColor = [groupColorDict colorValue];
     }
+    theTab.autoTabGroupProjectRoot = [arrangement[TAB_ARRANGEMENT_GROUP_PROJECT_ROOT] nilIfNull];
+    theTab.tabGroupPinnedByUser = [arrangement[TAB_ARRANGEMENT_GROUP_PINNED_BY_USER] boolValue];
     NSString *guid = arrangement[TAB_GUID];
     if (guid) {
         if ([[iTermController sharedInstance] tabWithGUID:guid] ||
@@ -3925,6 +3929,15 @@ NSString *const PTYTabArrangementOptionsPendingJumps = @"PTYTabArrangementOption
         if (self.tabGroupColor) {
             encoder[TAB_ARRANGEMENT_GROUP_COLOR] = self.tabGroupColor.dictionaryValue;
         }
+    }
+    // Unlike the definition, these stay meaningful for an ungrouped tab: the
+    // project root makes it a candidate to be grouped with a later tab in the
+    // same project, and the pin records that the user took it out of a group.
+    if (self.autoTabGroupProjectRoot) {
+        encoder[TAB_ARRANGEMENT_GROUP_PROJECT_ROOT] = self.autoTabGroupProjectRoot;
+    }
+    if (self.tabGroupPinnedByUser) {
+        encoder[TAB_ARRANGEMENT_GROUP_PINNED_BY_USER] = @YES;
     }
     // If in screenshot mode, encode the live session instead of the synthetic one
     PTYSession *sessionToEncode = self.activeSession;
@@ -7331,6 +7344,7 @@ typedef struct {
 - (void)sessionCurrentDirectoryDidChange:(PTYSession *)session {
     if (session == self.activeSession) {
         [_delegate tabInvalidateProxyIcon:self];
+        [_delegate tabCurrentWorkingDirectoryDidChange:self];
     }
 }
 

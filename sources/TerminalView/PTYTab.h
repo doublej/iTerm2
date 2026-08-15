@@ -102,6 +102,16 @@ extern NSString *const PTYTabArrangementOptionsPendingJumps;
 // Meaningful only when tabGroupID is non-nil.
 @property (nonatomic, copy) NSString *tabGroupName;
 @property (nonatomic, copy) NSColor *tabGroupColor;
+// The project root that auto-grouping last derived from this tab's working
+// directory, or nil if the tab was never auto-grouped. Like the group
+// definition it rides the tab (and is persisted), so auto-grouping can find the
+// group that belongs to a project without a registry. See
+// -[PseudoTerminal autoGroupTabByProject:].
+@property (nonatomic, copy) NSString *autoTabGroupProjectRoot;
+// Set once the user has expressed an opinion about this tab's group -- moved it
+// into or out of one, or renamed or recolored the group. Auto-grouping never
+// moves such a tab again.
+@property (nonatomic) BOOL tabGroupPinnedByUser;
 @property(nonatomic, readonly) NSString *title;  // the effective title
 @property (nonatomic, readonly) iTermVariableScope<iTermTabScope> *variablesScope;
 @property(nonatomic, readonly) iTermMetalUnavailableReason metalUnavailableReason;

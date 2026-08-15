@@ -39,6 +39,9 @@ typedef NS_OPTIONS(NSUInteger, PTYTabState) {
 - (void)tab:(PTYTab *)tab didChangeObjectCount:(NSInteger)objectCount;
 - (void)tabKeyLabelsDidChangeForSession:(PTYSession *)session;
 - (void)tabInvalidateProxyIcon:(PTYTab *)tab;
+// The active session's working directory became known or changed. This is where
+// auto-grouping by project hangs off.
+- (void)tabCurrentWorkingDirectoryDidChange:(PTYTab *)tab;
 - (void)tabRemoveTab:(PTYTab *)tab;
 - (void)tab:(PTYTab *)tab didChangeToState:(PTYTabState)newState;
 - (void)tabDidChangeTabStatus:(PTYTab *)tab;

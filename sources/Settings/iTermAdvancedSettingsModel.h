@@ -91,6 +91,7 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 + (NSString *)alternateSSHIntegrationScript;
 #endif
 + (BOOL)animateGraphStatusBarComponents;
++ (BOOL)autoGroupTabsByProject;
 + (BOOL)autoSearch;
 + (void)setAlternateMouseScroll:(BOOL)value;
 + (NSString *)alternateMouseScrollStringForDown;

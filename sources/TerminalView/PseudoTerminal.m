@@ -8050,6 +8050,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
         RLog(@"tabGroup: clearing group %@ from tab %@ torn off into a new window",
              aTab.tabGroupID, [tabViewItem label]);
         aTab.tabGroupID = nil;
+        aTab.tabGroupPinnedByUser = YES;
         [self reconcileTabGroupDefinitionForTab:aTab];
     }
 
@@ -8485,6 +8486,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     theTab.tabGroupID = [[NSUUID UUID] UUIDString];
     theTab.tabGroupName = name;
     theTab.tabGroupColor = [self nextTabGroupColor];
+    theTab.tabGroupPinnedByUser = YES;
     RLog(@"tabGroup: New Group %@ (%@) from tab %@", theTab.tabGroupID, name, [tabViewItem label]);
     [self updateTabColors];
 }
@@ -8498,6 +8500,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
         return;
     }
     theTab.tabGroupID = groupID;
+    theTab.tabGroupPinnedByUser = YES;
     // The definition has no separate store, so copy it from an existing member
     // to keep the new member self-sufficient.
     [self reconcileTabGroupDefinitionForTab:theTab];
@@ -8561,12 +8564,17 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     PTYTab *theTab = [tabViewItem identifier];
     RLog(@"tabGroup: removed tab %@ from group %@", [tabViewItem label], theTab.tabGroupID);
     theTab.tabGroupID = nil;
+    theTab.tabGroupPinnedByUser = YES;
     [self reconcileTabGroupDefinitionForTab:theTab];
     [self updateTabColors];
 }
 
-// Cycle a small system palette so consecutive new groups look distinct.
-- (NSColor *)nextTabGroupColor {
+// The colors a new group can get. System colors (systemBlueColor, ...) are
+// catalog colors with no direct -colorSpace; the tab color swatch view calls
+// -colorSpace when comparing, which throws for catalog colors. Callers convert
+// the chosen color to a concrete color space, like tab colors are, so the picker
+// can use it safely.
+- (NSArray<NSColor *> *)tabGroupColorPalette {
     static NSArray<NSColor *> *palette;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
@@ -8577,11 +8585,23 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
             [NSColor systemPinkColor],
         ] retain];
     });
+    return palette;
+}
+
+// Cycle a small system palette so consecutive new groups look distinct.
+- (NSColor *)nextTabGroupColor {
+    NSArray<NSColor *> *palette = [self tabGroupColorPalette];
     NSUInteger index = [self tabGroupsInWindow].count % palette.count;
-    // System colors (systemBlueColor, ...) are catalog colors with no direct
-    // -colorSpace; the tab color swatch view calls -colorSpace when comparing,
-    // which throws for catalog colors. Store the group color in a concrete color
-    // space like tab colors are, so the picker can use it safely.
+    return [palette[index] it_colorInDefaultColorSpace];
+}
+
+// An auto-created group indexes the palette by a hash of its project root rather
+// than by how many groups exist, so a project keeps the same color in every
+// window and across launches.
+- (NSColor *)tabGroupColorForProjectRoot:(NSString *)projectRoot {
+    NSArray<NSColor *> *palette = [self tabGroupColorPalette];
+    const NSInteger index = [iTermTabProjectGrouping colorIndexForProjectRoot:projectRoot
+                                                                       count:palette.count];
     return [palette[index] it_colorInDefaultColorSpace];
 }
 
@@ -8785,6 +8805,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
          droppedTab.tabGroupID ?: @"(none)",
          resolved ?: @"(none)");
     droppedTab.tabGroupID = resolved;
+    droppedTab.tabGroupPinnedByUser = YES;
     // The definition rides each member tab, so a tab that just joined a group
     // must adopt that group's name/color; otherwise it keeps its previous
     // group's, and if it becomes the group's first tab the whole chip derives
@@ -8810,6 +8831,125 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
             return;
         }
     }
+}
+
+#pragma mark - Automatic tab groups by project
+
+// Put `tab` in the group for the project its active session is working in. The
+// project root rides the tab (autoTabGroupProjectRoot) just like the group
+// definition does, so the group for a project is found by looking at the other
+// tabs and there is still no registry. Once created, an automatic group is an
+// ordinary group: draggable, renameable, recolorable, closeable.
+//
+// Nothing happens when the user has taken charge of this tab's group
+// (tabGroupPinnedByUser), and re-running with an unchanged working directory is
+// a no-op, which matters because a shell pushes its directory after every
+// command.
+- (void)autoGroupTabByProject:(PTYTab *)tab {
+    if (![iTermAdvancedSettingsModel autoGroupTabsByProject]) {
+        return;
+    }
+    if (![[self tabs] containsObject:tab]) {
+        return;
+    }
+    // nil for a remote session; grouping a tab by a path that isn't on this
+    // machine would derive the project root from the wrong filesystem.
+    NSString *pwd = tab.activeSession.currentLocalWorkingDirectory;
+    if (pwd.length == 0) {
+        return;
+    }
+    NSString *root = [iTermTabProjectGrouping projectRootForPath:pwd];
+    if (![iTermTabProjectGrouping shouldAutoGroupTabPinnedByUser:tab.tabGroupPinnedByUser
+                                                     projectRoot:root
+                                              currentProjectRoot:tab.autoTabGroupProjectRoot]) {
+        return;
+    }
+    NSString *previousGroupID = [[tab.tabGroupID retain] autorelease];
+    tab.autoTabGroupProjectRoot = root;
+
+    NSString *groupID = [self autoTabGroupIDForProjectRoot:root excludingTab:tab];
+    if (groupID == nil) {
+        // Don't turn every lone tab into a one-tab group: a project becomes a
+        // group only once a second tab is working in it.
+        NSArray<PTYTab *> *peers = [self ungroupedAutoTabsForProjectRoot:root excludingTab:tab];
+        if (peers.count > 0) {
+            groupID = [[NSUUID UUID] UUIDString];
+            NSString *name = [root lastPathComponent];
+            NSColor *color = [self tabGroupColorForProjectRoot:root];
+            RLog(@"tabGroup: auto-created group %@ (%@) for project %@", groupID, name, root);
+            for (PTYTab *peer in peers) {
+                peer.tabGroupID = groupID;
+                peer.tabGroupName = name;
+                peer.tabGroupColor = color;
+            }
+        }
+    }
+    if (groupID == nil && previousGroupID == nil) {
+        // Nothing to join and nothing to leave. The tab still remembers its
+        // project, so the next tab to work there groups with it.
+        return;
+    }
+    if ([groupID isEqualToString:previousGroupID]) {
+        return;
+    }
+    RLog(@"tabGroup: auto-grouping tab %@ into %@ for project %@",
+         [tab.tabViewItem label], groupID ?: @"(none)", root);
+    // A nil id here means the tab moved to a project that has no group, so it
+    // leaves the one it was auto-grouped into.
+    tab.tabGroupID = groupID;
+    // The definition rides each member tab, so copy it from a member.
+    [self reconcileTabGroupDefinitionForTab:tab];
+    [self dissolveAutoTabGroupIfStranded:previousGroupID];
+    [self updateTabColors];
+    // The tab may be far from its new group's other members; repair the
+    // contiguity invariant so they become one block.
+    [self tabsDidReorder];
+}
+
+// The id of the automatic group for `projectRoot` in this window, or nil if
+// there is none.
+- (NSString *)autoTabGroupIDForProjectRoot:(NSString *)projectRoot excludingTab:(PTYTab *)tab {
+    for (PTYTab *other in [self tabs]) {
+        if (other != tab &&
+            other.tabGroupID.length > 0 &&
+            [other.autoTabGroupProjectRoot isEqualToString:projectRoot]) {
+            return other.tabGroupID;
+        }
+    }
+    return nil;
+}
+
+// Tabs in this window that are working in `projectRoot`, belong to no group, and
+// are free to be grouped automatically.
+- (NSArray<PTYTab *> *)ungroupedAutoTabsForProjectRoot:(NSString *)projectRoot
+                                          excludingTab:(PTYTab *)tab {
+    NSMutableArray<PTYTab *> *result = [NSMutableArray array];
+    for (PTYTab *other in [self tabs]) {
+        if (other != tab &&
+            other.tabGroupID.length == 0 &&
+            !other.tabGroupPinnedByUser &&
+            [other.autoTabGroupProjectRoot isEqualToString:projectRoot]) {
+            [result addObject:other];
+        }
+    }
+    return result;
+}
+
+// A tab that moved to another project can leave its old automatic group with a
+// single member, which is a chip around one tab that the user never asked for.
+// Dissolve it. A group the user has touched is left alone, as always.
+- (void)dissolveAutoTabGroupIfStranded:(NSString *)groupID {
+    NSArray<PTYTab *> *remaining = [self tabsInGroup:groupID];
+    if (remaining.count != 1) {
+        return;
+    }
+    PTYTab *last = remaining.firstObject;
+    if (last.tabGroupPinnedByUser || last.autoTabGroupProjectRoot == nil) {
+        return;
+    }
+    RLog(@"tabGroup: dissolving auto group %@ left with one tab", groupID);
+    last.tabGroupID = nil;
+    [self reconcileTabGroupDefinitionForTab:last];
 }
 
 #pragma mark - Tab group context menu
@@ -8905,6 +9045,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     }
     for (PTYTab *member in [self tabsInGroup:groupID]) {
         member.tabGroupColor = color;
+        member.tabGroupPinnedByUser = YES;
     }
     if (color) {
         [[iTermRecentTabColors shared] addColor:color];
@@ -8928,6 +9069,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     }
     for (PTYTab *member in members) {
         member.tabGroupName = name;
+        member.tabGroupPinnedByUser = YES;
     }
     RLog(@"tabGroup: renamed group %@ to %@", groupID, name);
     [self updateTabColors];
@@ -8940,6 +9082,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
 - (void)ungroupTabGroup:(id)sender {
     for (PTYTab *member in [self tabsInGroup:[sender representedObject]]) {
         member.tabGroupID = nil;
+        member.tabGroupPinnedByUser = YES;
         [self reconcileTabGroupDefinitionForTab:member];
     }
     [self updateTabColors];
@@ -9000,6 +9143,7 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
             aTab.tabGroupID = newID;
             aTab.tabGroupName = newName;
             aTab.tabGroupColor = newColor;
+            aTab.tabGroupPinnedByUser = YES;
         }
     }
     [self updateTabColors];
@@ -14502,6 +14646,10 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     if (tab == self.currentTab) {
         [self updateProxyIcon];
     }
+}
+
+- (void)tabCurrentWorkingDirectoryDidChange:(PTYTab *)tab {
+    [self autoGroupTabByProject:tab];
 }
 
 - (void)tabDidChangeGraphic:(PTYTab *)tab shouldShow:(BOOL)shouldShow image:(NSImage *)image {
